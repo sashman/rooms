@@ -20,6 +20,11 @@ class Event:
 	def __init__(self):
 		self.name = "Generic Event"
 
+class GameStartedEvent(Event):
+	def __init__(self, game):
+		self.name = "Game Started Event"
+		self.game = game
+
 class TickEvent(Event):
 	def __init__(self, game_map):
 		self.name = "CPU Tick Event"
@@ -106,6 +111,30 @@ class KeyboardController:
 							self.player.K_LEFT = False
 						elif event.key == pygame.K_RIGHT:
 							self.player.K_RIGHT = False
+
+from twisted.spread import pb
+#------------------------------------------------------------------------------
+class NetworkClientController(pb.Root):
+        
+        def __init__(self, evManager):
+                self.evManager = evManager
+                self.evManager.RegisterListener( self )
+
+        #----------------------------------------------------------------------
+        def remote_GameStartRequest(self):
+                ev = GameStartRequest( )
+                self.evManager.Post( ev )
+                return 1
+
+        #----------------------------------------------------------------------
+        def remote_CharactorMoveRequest(self, direction):
+                ev = CharactorMoveRequest( direction )
+                self.evManager.Post( ev )
+                return 1
+
+        #----------------------------------------------------------------------
+        def Notify(self, event):
+                pass
 			
 
 
@@ -126,10 +155,17 @@ class CPUSpinnerController:
 
 		while self.keepGoing:			
 
-			tickFPS = self.clock.tick()
+			tickFPS = self.clock.tick(60)
 
 			if not self.game_map.state == Map.STATE_BUILT:
 				self.game_map.Build()
+				room = self.game_map.rooms[0]
+				floor_tile = random.choice([tile for tile in room.tiles if tile.type == 'floor'])
+				self.game_map.present_entities[0].x = floor_tile.x
+				self.game_map.present_entities[0].y = floor_tile.y
+
+				ev = GameStartedEvent( game_map )
+				self.evManager.Post( ev )
 
 			for entity in self.game_map.present_entities:
 				
@@ -165,11 +201,10 @@ class PygameView:
 			gameMap = event.game_map
 			self.ShowMap( gameMap )
 
-		#elif isinstance( event, EntityMoveEvent ):
-			for entity in gameMap.present_entities:
-				self.ShowEntity(entity)
+		
+			for entity in gameMap.present_entities: self.ShowEntity(entity)
 
-		#elif isinstance( event, MapBuiltEvent ):
+		
 
 
 		pygame.display.flip()
@@ -184,7 +219,26 @@ class PygameView:
 	def ShowEntity(self, entity):
 		entity.display(self.screen)
 
-		
+
+class TextLogView:
+        
+        def __init__(self, evManager):
+                self.evManager = evManager
+                self.evManager.RegisterListener( self )
+                                                                               
+                                                                               
+        #----------------------------------------------------------------------
+        def Notify(self, event):
+                                                                               
+                if isinstance( event, TickEvent ):
+
+                	gameMap = event.game_map
+                	for entity in gameMap.present_entities:
+                		print entity.name + " " + entity.x + "," + entity.y
+
+
+
+                        
 
 
 class Square(object):
@@ -198,7 +252,7 @@ class Square(object):
 
 
 class Entity(Square):
-	def __init__(self, (x,y), colour, evManager):
+	def __init__(self, name, (x,y), colour, evManager):
 		super(Entity, self).__init__((x,y))
 		self.colour = colour
 		self.evManager = evManager
@@ -210,22 +264,22 @@ class Entity(Square):
 
 class LivingEntity(Entity):
 	
-	def __init__(self, (x,y), colour, evManager):
-		super(LivingEntity, self).__init__((x,y), colour, evManager)
+	def __init__(self, name, (x,y), colour, evManager):
+		super(LivingEntity, self).__init__(name, (x,y), colour, evManager)
 		self.alive = True
 		
 	def moveX(self,x, t):
 		if self.alive:
 			self.x += x * t
-			ev = MapBuiltEvent( self )
-			self.evManager.Post( ev )
+			event = EntityMoveEvent(self)
+			self.evManager.Post( event ) 
 
 		
 	def moveY(self,y, t):
 		if self.alive:
 			self.y += y * t
-			ev = MapBuiltEvent( self )
-			self.evManager.Post( ev )
+			event = EntityMoveEvent(self)
+			self.evManager.Post( event )
 
 	def wall_collision(self, rooms):
 		for room in rooms:
@@ -237,8 +291,6 @@ class LivingEntity(Entity):
 					if wall_tile.type == 'wall':
 						if self.x + TILE_SIZE > wall_tile.x and self.x < wall_tile.x + TILE_SIZE and self.y + TILE_SIZE > wall_tile.y and self.y < wall_tile.y + TILE_SIZE:
 
-							#tile collision
-							#wall_tile.type = 'floor'
 							xc,yc = self.get_center()
 							
 							if yc < wall_tile.y:
@@ -252,8 +304,8 @@ class LivingEntity(Entity):
 								self.x = wall_tile.x + TILE_SIZE
 
 
-							ev = MapBuiltEvent( self )
-							self.evManager.Post( ev )
+							event = EntityMoveEvent(self)
+							self.evManager.Post( event )
 
 
 
@@ -261,8 +313,8 @@ class LivingEntity(Entity):
 
 
 class Player(LivingEntity):
-	def __init__(self, (x,y), evManager):
-		super(Player, self).__init__((x,y), (100,200,150), evManager)
+	def __init__(self,name,(x,y), evManager):
+		super(Player, self).__init__(name,(x,y),(100,200,150), evManager)
 		self.K_DOWN = False
 		self.K_UP = False
 		self.K_LEFT = False
@@ -424,7 +476,7 @@ class Map:
 		x = int(width/2)
 		y = int(height/2)
 
-		room = Room((x,y), (sizew,sizeh))	
+		room = Room((x,y), (sizew,sizeh))
 		self.rooms.append(room)	
 
 
